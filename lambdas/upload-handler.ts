@@ -10,7 +10,8 @@ const bedrock = new BedrockRuntimeClient({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 
 // Extract text from document using Textract or direct read
-async function extractText(fileBuffer: Buffer, ext: string): Promise<string> {
+// For PDFs, uses S3 location instead of bytes for better compatibility
+async function extractText(fileBuffer: Buffer, ext: string, s3Bucket?: string, s3Key?: string): Promise<string> {
   if (ext === '.txt') {
     return fileBuffer.toString('utf-8');
   }
@@ -30,21 +31,34 @@ async function extractText(fileBuffer: Buffer, ext: string): Promise<string> {
       if (!tail.includes('%%EOF')) {
         console.warn('PDF might be truncated or corrupted: missing %%EOF marker');
       }
-      
-      // Textract has size limits: 10MB for DetectDocumentText with bytes
-      const maxSize = 10 * 1024 * 1024; // 10MB
-      if (fileBuffer.length > maxSize) {
-        throw new Error(`PDF file too large (${(fileBuffer.length / 1024 / 1024).toFixed(2)}MB). Maximum size is 10MB for direct processing.`);
-      }
     }
     
     try {
-      // Use DetectDocumentText for text extraction
-      const textractResult = await textract.send(
-        new DetectDocumentTextCommand({
-          Document: { Bytes: fileBuffer },
-        })
-      );
+      let textractResult;
+      
+      // For PDFs, use S3 location (more reliable, no size/format restrictions)
+      // For images, use bytes (faster, works well)
+      if (ext === '.pdf' && s3Bucket && s3Key) {
+        console.log(`Using S3 location for PDF: s3://${s3Bucket}/${s3Key}`);
+        textractResult = await textract.send(
+          new DetectDocumentTextCommand({
+            Document: {
+              S3Object: {
+                Bucket: s3Bucket,
+                Name: s3Key,
+              }
+            },
+          })
+        );
+      } else {
+        // For images, use bytes (synchronous, faster)
+        console.log(`Using bytes for ${ext} file`);
+        textractResult = await textract.send(
+          new DetectDocumentTextCommand({
+            Document: { Bytes: fileBuffer },
+          })
+        );
+      }
       
       // Filter for LINE blocks for better text quality
       const extractedText = textractResult.Blocks
@@ -167,7 +181,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     };
     const contentType = contentTypeMap[ext] || 'application/octet-stream';
 
-    // 1️⃣ Upload to S3 (for backup/reference)
+    // 1️⃣ Upload to S3 FIRST (required for PDF Textract processing)
     await s3.send(
       new PutObjectCommand({
         Bucket: BUCKET_NAME,
@@ -177,9 +191,9 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       })
     );
 
-    // 2️⃣ Extract text immediately using Textract
+    // 2️⃣ Extract text using Textract (PDFs use S3 location, images use bytes)
     console.log('Extracting text from document...');
-    const extractedText = await extractText(fileBuffer, ext);
+    const extractedText = await extractText(fileBuffer, ext, BUCKET_NAME, key);
 
     if (!extractedText) {
       return {
