@@ -60,15 +60,6 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     'Access-Control-Allow-Methods': 'POST,OPTIONS',
   };
 
-  // Handle preflight requests
-  if (event.requestContext.http.method === 'OPTIONS') {
-    return {
-      statusCode: 200,
-      headers: corsHeaders,
-      body: '',
-    };
-  }
-
   try {
     if (!event.body) {
       return { 
