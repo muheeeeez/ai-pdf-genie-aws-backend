@@ -45,10 +45,26 @@ async function answerQuestion(extractedText: string, question: string): Promise<
 }
 
 export const handler: APIGatewayProxyHandlerV2 = async (event) => {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,X-Api-Key,Authorization',
+    'Access-Control-Allow-Methods': 'POST,OPTIONS',
+  };
+
+  // Handle preflight requests
+  if (event.requestContext.http.method === 'OPTIONS') {
+    return {
+      statusCode: 200,
+      headers: corsHeaders,
+      body: '',
+    };
+  }
+
   try {
     if (!event.body) {
       return { 
-        statusCode: 400, 
+        statusCode: 400,
+        headers: corsHeaders,
         body: JSON.stringify({ error: 'No input provided' }) 
       };
     }
@@ -58,7 +74,8 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     // Validate inputs
     if (!extractedText || !question) {
       return { 
-        statusCode: 400, 
+        statusCode: 400,
+        headers: corsHeaders,
         body: JSON.stringify({ 
           error: 'Missing required fields: extractedText and question',
           hint: 'Frontend should send the extractedText from localStorage along with the user question'
@@ -73,6 +90,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     // Return the answer
     return {
       statusCode: 200,
+      headers: corsHeaders,
       body: JSON.stringify({
         question,
         answer,
@@ -82,6 +100,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     console.error('Q&A processing error:', err);
     return {
       statusCode: 500,
+      headers: corsHeaders,
       body: JSON.stringify({
         error: 'Q&A processing failed',
         details: err instanceof Error ? err.message : 'Unknown error',

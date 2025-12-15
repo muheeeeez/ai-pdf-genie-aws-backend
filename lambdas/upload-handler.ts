@@ -54,10 +54,26 @@ async function generateSummary(text: string): Promise<string> {
 }
 
 export const handler: APIGatewayProxyHandlerV2 = async (event) => {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,X-Api-Key,Authorization',
+    'Access-Control-Allow-Methods': 'POST,OPTIONS',
+  };
+
+  // Handle preflight requests
+  if (event.requestContext.http.method === 'OPTIONS') {
+    return {
+      statusCode: 200,
+      headers: corsHeaders,
+      body: '',
+    };
+  }
+
   try {
     if (!event.body) {
       return { 
-        statusCode: 400, 
+        statusCode: 400,
+        headers: corsHeaders,
         body: JSON.stringify({ error: 'No file uploaded' }) 
       };
     }
@@ -69,7 +85,8 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
     if (!allowedExtensions.includes(ext)) {
       return { 
-        statusCode: 400, 
+        statusCode: 400,
+        headers: corsHeaders,
         body: JSON.stringify({ error: 'Unsupported file type' }) 
       };
     }
@@ -95,6 +112,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     if (!extractedText) {
       return {
         statusCode: 400,
+        headers: corsHeaders,
         body: JSON.stringify({ error: 'Could not extract text from document' }),
       };
     }
@@ -107,6 +125,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     // Frontend will store in localStorage for later Q&A
     return {
       statusCode: 200,
+      headers: corsHeaders,
       body: JSON.stringify({
         documentId,
         fileName,
@@ -120,6 +139,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     console.error('Upload/Processing error:', err);
     return {
       statusCode: 500,
+      headers: corsHeaders,
       body: JSON.stringify({
         error: 'Upload or processing failed',
         details: err instanceof Error ? err.message : 'Unknown error',
