@@ -1,0 +1,50 @@
+name: AI PDF Genie Backend Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x]
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install AWS CDK
+        run: sudo npm i -g aws-cdk
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Install esbuild
+        run: npm install -D esbuild
+
+      - name: CDK Synthesize
+        run: cdk synth
+
+      - name: CDK Deploy
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ca-central-1
+        run: cdk deploy --all --require-approval never
+
+      - name: Deployment Summary
+        run: |
+          echo "## 🚀 Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Get API keys from AWS Console → API Gateway → API Keys" >> $GITHUB_STEP_SUMMARY
+          echo "2. Update frontend environment variables" >> $GITHUB_STEP_SUMMARY
+          echo "3. Test the endpoints!" >> $GITHUB_STEP_SUMMARY
