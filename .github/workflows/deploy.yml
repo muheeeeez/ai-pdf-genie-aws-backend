@@ -2,7 +2,7 @@ name: AI PDF Genie Backend Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [master]
  
 
 jobs:
