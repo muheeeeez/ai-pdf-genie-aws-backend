@@ -1,6 +1,6 @@
 import { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { TextractClient, AnalyzeDocumentCommand } from '@aws-sdk/client-textract';
+import { TextractClient, DetectDocumentTextCommand } from '@aws-sdk/client-textract';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import * as crypto from 'crypto';
 
@@ -12,10 +12,10 @@ const BUCKET_NAME = process.env.BUCKET_NAME!;
 // Extract text from document using Textract or direct read
 async function extractText(fileBuffer: Buffer, ext: string): Promise<string> {
   if (ext === '.pdf' || ['.jpg', '.jpeg', '.png', '.tif', '.tiff'].includes(ext)) {
+    // Use DetectDocumentText for simpler, more reliable text extraction
     const textractResult = await textract.send(
-      new AnalyzeDocumentCommand({
+      new DetectDocumentTextCommand({
         Document: { Bytes: fileBuffer },
-        FeatureTypes: ['TABLES', 'FORMS'],
       })
     );
     return textractResult.Blocks?.map(b => b.Text).filter(Boolean).join(' ') || '';
