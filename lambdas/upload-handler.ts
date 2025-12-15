@@ -11,17 +11,76 @@ const BUCKET_NAME = process.env.BUCKET_NAME!;
 
 // Extract text from document using Textract or direct read
 async function extractText(fileBuffer: Buffer, ext: string): Promise<string> {
-  if (ext === '.pdf' || ['.jpg', '.jpeg', '.png', '.tif', '.tiff'].includes(ext)) {
-    // Use DetectDocumentText for simpler, more reliable text extraction
-    const textractResult = await textract.send(
-      new DetectDocumentTextCommand({
-        Document: { Bytes: fileBuffer },
-      })
-    );
-    return textractResult.Blocks?.map(b => b.Text).filter(Boolean).join(' ') || '';
-  } else if (ext === '.txt') {
+  if (ext === '.txt') {
     return fileBuffer.toString('utf-8');
   }
+  
+  if (ext === '.pdf' || ['.jpg', '.jpeg', '.png', '.tif', '.tiff'].includes(ext)) {
+    console.log(`Processing ${ext} file with Textract (size: ${fileBuffer.length} bytes)`);
+    
+    // Validate PDF file signature
+    if (ext === '.pdf') {
+      const header = fileBuffer.slice(0, 5).toString('utf-8');
+      if (!header.startsWith('%PDF-')) {
+        throw new Error('Invalid PDF file: File does not have a valid PDF signature. Please ensure the file is a valid PDF.');
+      }
+      
+      // Check if PDF is not corrupted (should have %%EOF at the end)
+      const tail = fileBuffer.slice(-1024).toString('utf-8');
+      if (!tail.includes('%%EOF')) {
+        console.warn('PDF might be truncated or corrupted: missing %%EOF marker');
+      }
+      
+      // Textract has size limits: 10MB for DetectDocumentText with bytes
+      const maxSize = 10 * 1024 * 1024; // 10MB
+      if (fileBuffer.length > maxSize) {
+        throw new Error(`PDF file too large (${(fileBuffer.length / 1024 / 1024).toFixed(2)}MB). Maximum size is 10MB for direct processing.`);
+      }
+    }
+    
+    try {
+      // Use DetectDocumentText for text extraction
+      const textractResult = await textract.send(
+        new DetectDocumentTextCommand({
+          Document: { Bytes: fileBuffer },
+        })
+      );
+      
+      // Filter for LINE blocks for better text quality
+      const extractedText = textractResult.Blocks
+        ?.filter(block => block.BlockType === 'LINE' && block.Text)
+        .map(block => block.Text)
+        .join(' ') || '';
+      
+      console.log(`Successfully extracted ${extractedText.length} characters from ${ext} file`);
+      
+      if (!extractedText || extractedText.trim().length === 0) {
+        throw new Error('No text could be extracted from the document. The document might be empty, image-based, or password-protected.');
+      }
+      
+      return extractedText;
+    } catch (error: any) {
+      console.error('Textract error details:', {
+        name: error.name,
+        message: error.message,
+        code: error.Code,
+        statusCode: error.$metadata?.httpStatusCode
+      });
+      
+      // Provide specific error messages
+      if (error.name === 'UnsupportedDocumentException') {
+        throw new Error('PDF format not supported by Textract. Please ensure the PDF is not encrypted, password-protected, or corrupted. Try re-saving the PDF or using a different file.');
+      } else if (error.name === 'InvalidParameterException') {
+        throw new Error('Invalid document format. The file might be corrupted or not a valid PDF.');
+      } else if (error.message && !error.name?.includes('Exception')) {
+        // Re-throw our custom errors
+        throw error;
+      }
+      
+      throw new Error(`Text extraction failed: ${error.message || 'Unknown error'}`);
+    }
+  }
+  
   return '';
 }
 
@@ -83,8 +142,30 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     }
 
     const fileBuffer = Buffer.from(fileBase64, 'base64');
+    
+    // Validate buffer
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return {
+        statusCode: 400,
+        headers: corsHeaders,
+        body: JSON.stringify({ error: 'Empty or invalid file received' }),
+      };
+    }
+    
     const documentId = crypto.randomUUID();
     const key = `${documentId}-${fileName}`;
+
+    // Determine proper content type for S3
+    const contentTypeMap: { [key: string]: string } = {
+      '.pdf': 'application/pdf',
+      '.txt': 'text/plain',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.tif': 'image/tiff',
+      '.tiff': 'image/tiff',
+    };
+    const contentType = contentTypeMap[ext] || 'application/octet-stream';
 
     // 1️⃣ Upload to S3 (for backup/reference)
     await s3.send(
@@ -92,7 +173,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
         Bucket: BUCKET_NAME,
         Key: key,
         Body: fileBuffer,
-        ContentType: ext === '.txt' ? 'text/plain' : 'application/pdf',
+        ContentType: contentType,
       })
     );
 
@@ -128,11 +209,35 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     };
   } catch (err) {
     console.error('Upload/Processing error:', err);
+    
+    // Determine appropriate status code and message
+    let statusCode = 500;
+    let errorMessage = 'Upload or processing failed';
+    
+    if (err instanceof Error) {
+      const msg = err.message.toLowerCase();
+      
+      // Client errors (400) - user can fix
+      if (msg.includes('invalid') || 
+          msg.includes('not supported') || 
+          msg.includes('too large') ||
+          msg.includes('empty') ||
+          msg.includes('password-protected') ||
+          msg.includes('encrypted') ||
+          msg.includes('corrupted')) {
+        statusCode = 400;
+        errorMessage = err.message;
+      } else {
+        // Server errors (500) - system issue
+        errorMessage = 'Server processing error';
+      }
+    }
+    
     return {
-      statusCode: 500,
+      statusCode,
       headers: corsHeaders,
       body: JSON.stringify({
-        error: 'Upload or processing failed',
+        error: errorMessage,
         details: err instanceof Error ? err.message : 'Unknown error',
       }),
     };
